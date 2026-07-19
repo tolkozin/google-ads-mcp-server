@@ -239,14 +239,16 @@ def lines(df: pd.DataFrame, cols: list[str], y_title: str, money: bool, legend_t
                                y=alt.Y("value:Q", title=y_title), color=color,
                                opacity=alt.condition(pick, alt.value(1), alt.value(0.12)))
     line = base.mark_line(strokeWidth=2)
-    pts = base.mark_point(size=55, filled=True).encode(
-        size=alt.condition(hover, alt.value(110), alt.value(45)))
+    pts = base.mark_point(size=45, filled=True)
+    # One crosshair per day whose tooltip lists EVERY series for that day — pivoting
+    # first, otherwise the rule would pick one arbitrary row out of the melted data.
     rule = (alt.Chart(m).mark_rule(color="#c3c2b7", strokeWidth=1)
             .encode(x="date:T", opacity=alt.condition(hover, alt.value(0.7), alt.value(0)),
-                    tooltip=[alt.Tooltip("date:T", title="Day"),
-                             alt.Tooltip("Metric:N"), alt.Tooltip("value:Q", title=y_title, format=fmt)])
+                    tooltip=[alt.Tooltip("date:T", title="Day")]
+                            + [alt.Tooltip(f"{c}:Q", title=c, format=fmt) for c in cols])
+            .transform_pivot("Metric", value="value", groupby=["date"])
             .add_params(hover))
-    return styled((rule + line + pts).add_params(pick))
+    return styled((line + pts + rule).add_params(pick))
 
 
 def stacked_spend(df: pd.DataFrame):
@@ -376,20 +378,32 @@ def channel_block(channel: str, kind: str):
             st.markdown("**Cost per event by day**")
             st.caption("CPI install · CPS signup · CPL verification — click a legend item to isolate it")
             ch = lines(df, ["CPI", "CPS", "CPL"], "Cost $", money=True, legend_title="Metric")
-            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No events yet.")
+            if ch is not None:
+                st.altair_chart(ch, width="stretch")
+            else:
+                st.info("No events yet.")
         with c2:
             st.markdown("**Spend by day · by ad group**")
             ch = stacked_spend(ag)
-            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No ad-group spend.")
+            if ch is not None:
+                st.altair_chart(ch, width="stretch")
+            else:
+                st.info("No ad-group spend.")
         c3, c4 = st.columns(2)
         with c3:
             st.markdown("**Deposits & deposit attempts by day**")
             ch = lines(df, ["deposits", "dep_att"], "Count", money=False, legend_title="Event")
-            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No deposit events yet.")
+            if ch is not None:
+                st.altair_chart(ch, width="stretch")
+            else:
+                st.info("No deposit events yet.")
         with c4:
             st.markdown("**Signups & verifications by day**")
             ch = lines(df, ["signups", "verifs"], "Count", money=False, legend_title="Event")
-            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No events yet.")
+            if ch is not None:
+                st.altair_chart(ch, width="stretch")
+            else:
+                st.info("No events yet.")
         with st.expander("Daily table"):
             st.dataframe(df, width="stretch", hide_index=True)
         if not ag.empty:
@@ -521,8 +535,9 @@ with tab_o:
             vdf = pd.DataFrame(out).sort_values("cost", ascending=False)
             cut = vdf[vdf["verdict"].str.startswith("⛔")]
             keep = vdf[vdf["verdict"].str.startswith("⏳")]
-            st.warning(f"**{len(cut)}** keywords are genuinely weak · **{len(keep)}** simply lack data "
-                       f"(pausing those would cut traffic without evidence).") if len(cut) or len(keep) else None
+            if len(cut) or len(keep):
+                st.warning(f"**{len(cut)}** keywords are genuinely weak · **{len(keep)}** simply lack data "
+                           f"(pausing those would cut traffic without evidence).")
             st.dataframe(vdf, width="stretch", hide_index=True,
                          column_config={"cost": st.column_config.NumberColumn(format="$%.2f"),
                                         "signups": st.column_config.NumberColumn(format="%.1f"),
