@@ -1,0 +1,42 @@
+{
+  "brand": "Acme",
+
+  "geo_target_constant": "geoTargetConstants/2840",
+  "language_constant": "languageConstants/1000",
+
+  "keyword_seeds": [
+    "buy product online",
+    "best product app",
+    "product for beginners"
+  ],
+
+  "intent_tokens": ["buy", "order", "app", "where", "download", "signup"],
+
+  "junk_tokens": [
+    "free", "cheap", "jobs", "salary", "tutorial", "what is",
+    "calculator", "converter", "news", "price chart", "competitor"
+  ],
+
+  "negative_reasons": [
+    { "tokens": ["price", "rate", "how much", "news", "chart"], "label": "Informational (rate/news)" },
+    { "tokens": ["calculator", "converter", "convert"], "label": "Conversion tool" },
+    { "tokens": ["jobs", "salary", "earn money", "make money", "free"], "label": "Make-money / off-target" },
+    { "tokens": ["tutorial", "what is", "how to"], "label": "Educational" },
+    { "tokens": ["competitor"], "label": "Competitor / other brand" }
+  ],
+
+  "creative_bank": {
+    "headlines": [
+      "Get started in minutes",
+      "Simple and secure",
+      "Try the app today",
+      "Everything in one app",
+      "Fast, safe, easy"
+    ],
+    "descriptions": [
+      "Get started in minutes and manage everything from one secure app.",
+      "Download the app, create your account and start today.",
+      "Fast setup, clear pricing and support whenever you need it."
+    ]
+  }
+}

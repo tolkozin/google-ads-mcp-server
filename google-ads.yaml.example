@@ -1,0 +1,21 @@
+# Copy this file to `google-ads.yaml` (which is gitignored) and fill in real values.
+# Point the server at it with:  export GOOGLE_ADS_CREDENTIALS=/absolute/path/to/google-ads.yaml
+#
+# How to obtain each value: see README.md → "Getting credentials".
+
+# OAuth2 client (from Google Cloud Console → APIs & Services → Credentials → OAuth client, type "Desktop").
+client_id: "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com"
+client_secret: "YOUR_OAUTH_CLIENT_SECRET"
+
+# Long-lived refresh token generated once via the OAuth consent flow (scope: https://www.googleapis.com/auth/adwords).
+refresh_token: "YOUR_REFRESH_TOKEN"
+
+# Developer token from the Google Ads API Center (Basic Access is enough for v1).
+developer_token: "YOUR_DEVELOPER_TOKEN"
+
+# Manager (MCC) customer id WITHOUT dashes, used as the login/operating account.
+# Omit or leave blank if you authenticate directly against a single (non-manager) account.
+login_customer_id: "1234567890"
+
+# Recommended: keep proto-plus objects (the codebase assumes this default).
+use_proto_plus: true

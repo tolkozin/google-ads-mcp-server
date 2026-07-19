@@ -1,0 +1,31 @@
+# Secrets — never commit
+google-ads.yaml
+.env
+
+# Audit logs (may contain account ids / change history)
+*.audit.jsonl
+audit/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.python-version
+
+# uv
+# (uv.lock IS committed on purpose for reproducible installs)
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+reports/
+logs/
+automation_secrets.json
+config.json
