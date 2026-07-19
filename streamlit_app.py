@@ -28,7 +28,6 @@ st.set_page_config(page_title=f"Google Ads — {BRAND}", layout="wide", page_ico
 S1, S2, S3 = "#2a78d6", "#1baf7a", "#eda100"        # categorical slots 1-3
 GOOD, WARN, CRIT = "#0ca30c", "#fab219", "#d03b3b"  # status (never used as series)
 INK, MUTED, GRID = "#0b0b0b", "#898781", "#e1e0d9"
-FUNNEL_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab"]  # ordinal, validated
 
 
 def styled(chart, height: int = 260):
@@ -125,9 +124,29 @@ def daily(account: str, ids: tuple, s: date, e: date) -> pd.DataFrame:
     if not day:
         return pd.DataFrame()
     df = pd.DataFrame([{"date": pd.to_datetime(d), **v} for d, v in sorted(day.items())])
-    for label, col in (("$/Signup", "signups"), ("$/Verif", "verifs"), ("$/Install", "installs")):
+    # CPI = per install · CPS = per signup · CPL = per verification (the opt. event)
+    for label, col in (("CPI", "installs"), ("CPS", "signups"), ("CPL", "verifs")):
         df[label] = (df["cost"] / df[col]).where(df[col] > 0)
     return df
+
+
+@st.cache_data(ttl=600, show_spinner="Loading ad-group split…")
+def daily_by_adgroup(account: str, ids: tuple, s: date, e: date) -> pd.DataFrame:
+    """Daily spend split by ad group (top 6 by spend, the rest folded into Other)."""
+    if not ids:
+        return pd.DataFrame()
+    idstr = ",".join(map(str, ids))
+    recs = [{"date": pd.to_datetime(x.segments.date), "ad_group": x.ad_group.name,
+             "cost": usd(x.metrics.cost_micros)}
+            for x in q(account, f"""SELECT segments.date, ad_group.name, metrics.cost_micros
+                FROM ad_group WHERE campaign.id IN ({idstr}) AND {_between(s, e)}
+                AND metrics.cost_micros > 0""")]
+    if not recs:
+        return pd.DataFrame()
+    df = pd.DataFrame(recs)
+    top = df.groupby("ad_group")["cost"].sum().sort_values(ascending=False).head(6).index
+    df["ad_group"] = df["ad_group"].where(df["ad_group"].isin(top), "Other")
+    return df.groupby(["date", "ad_group"], as_index=False)["cost"].sum()
 
 
 @st.cache_data(ttl=600, show_spinner="Loading campaign split…")
@@ -203,41 +222,46 @@ def uac_assets(account: str, ids: tuple, s: date, e: date) -> pd.DataFrame:
 
 
 # ============================== charts ==============================
-def funnel(t: dict, stages: list[tuple]):
-    df = pd.DataFrame([{"stage": lbl, "count": t[k]} for k, lbl in stages])
-    top = df["count"].iloc[0] or 1
-    df["pct"] = df["count"] / top * 100
-    df["label"] = [f"{c:,.0f}   {p:.0f}%" for c, p in zip(df["count"], df["pct"])]
-    order = [lbl for _, lbl in stages]
-    base = alt.Chart(df).encode(y=alt.Y("stage:N", sort=order, title=None),
-                                x=alt.X("count:Q", title=None, axis=None))
-    bars = base.mark_bar(cornerRadiusEnd=4, height=26).encode(
-        color=alt.Color("stage:N", sort=order, legend=None,
-                        scale=alt.Scale(domain=order, range=FUNNEL_RAMP[:len(order)])),
-        tooltip=[alt.Tooltip("stage:N", title="Stage"),
-                 alt.Tooltip("count:Q", title="Count", format=",.0f"),
-                 alt.Tooltip("pct:Q", title="% of top", format=".1f")])
-    text = base.mark_text(align="left", dx=8, color=INK, fontSize=12).encode(text="label:N")
-    return styled(bars + text, height=44 * len(order))
+def lines(df: pd.DataFrame, cols: list[str], y_title: str, money: bool, legend_title=None):
+    """Multi-series line chart on ONE axis. Interactive: click the legend to isolate
+    a series, hover for a crosshair with every series' value on that day."""
+    m = (df.melt(id_vars="date", value_vars=cols, var_name="Metric", value_name="value")
+           .dropna(subset=["value"]))
+    if m.empty:
+        return None
+    fmt = "$,.2f" if money else ",.0f"
+    pick = alt.selection_point(fields=["Metric"], bind="legend")
+    hover = alt.selection_point(fields=["date"], nearest=True, on="pointerover",
+                                empty=False, clear="pointerout")
+    color = alt.Color("Metric:N", title=legend_title,
+                      scale=alt.Scale(domain=cols, range=[S1, S2, S3][:len(cols)]))
+    base = alt.Chart(m).encode(x=alt.X("date:T", title=None),
+                               y=alt.Y("value:Q", title=y_title), color=color,
+                               opacity=alt.condition(pick, alt.value(1), alt.value(0.12)))
+    line = base.mark_line(strokeWidth=2)
+    pts = base.mark_point(size=55, filled=True).encode(
+        size=alt.condition(hover, alt.value(110), alt.value(45)))
+    rule = (alt.Chart(m).mark_rule(color="#c3c2b7", strokeWidth=1)
+            .encode(x="date:T", opacity=alt.condition(hover, alt.value(0.7), alt.value(0)),
+                    tooltip=[alt.Tooltip("date:T", title="Day"),
+                             alt.Tooltip("Metric:N"), alt.Tooltip("value:Q", title=y_title, format=fmt)])
+            .add_params(hover))
+    return styled((rule + line + pts).add_params(pick))
 
 
-def trend(df: pd.DataFrame, col: str, title: str, color: str, money: bool):
-    fmt = "$,.0f" if money else ",.0f"
-    d = df[df[col].notna()]
-    ch = alt.Chart(d).mark_line(color=color, strokeWidth=2, point=alt.OverlayMarkDef(
-        size=45, filled=True, fill=color)).encode(
-        x=alt.X("date:T", title=None), y=alt.Y(f"{col}:Q", title=title),
-        tooltip=[alt.Tooltip("date:T", title="Day"), alt.Tooltip(f"{col}:Q", title=title, format=fmt)])
-    return styled(ch)
-
-
-def multi_trend(df: pd.DataFrame, cols: list[str], title: str):
-    m = df.melt(id_vars="date", value_vars=cols, var_name="Event", value_name="count")
-    ch = alt.Chart(m).mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True)).encode(
-        x=alt.X("date:T", title=None), y=alt.Y("count:Q", title=title),
-        color=alt.Color("Event:N", title=None, scale=alt.Scale(domain=cols, range=[S1, S2, S3][:len(cols)])),
-        tooltip=[alt.Tooltip("date:T", title="Day"), "Event:N",
-                 alt.Tooltip("count:Q", title="Count", format=",.0f")])
+def stacked_spend(df: pd.DataFrame):
+    """Daily spend, stacked by ad group. 2px surface gap between segments."""
+    if df.empty:
+        return None
+    groups = list(df.groupby("ad_group")["cost"].sum().sort_values(ascending=False).index)
+    pick = alt.selection_point(fields=["ad_group"], bind="legend")
+    ch = alt.Chart(df).mark_bar(cornerRadiusEnd=3, stroke="#fcfcfb", strokeWidth=2, size=20).encode(
+        x=alt.X("date:T", title=None), y=alt.Y("cost:Q", title="Spend $", stack="zero"),
+        color=alt.Color("ad_group:N", title="Ad group",
+                        scale=alt.Scale(domain=groups, range=[S1, S2, S3, "#4a3aa7", "#e34948", "#eb6834", MUTED][:len(groups)])),
+        opacity=alt.condition(pick, alt.value(1), alt.value(0.15)),
+        tooltip=[alt.Tooltip("date:T", title="Day"), alt.Tooltip("ad_group:N", title="Ad group"),
+                 alt.Tooltip("cost:Q", title="Spend", format="$,.2f")]).add_params(pick)
     return styled(ch)
 
 
@@ -345,31 +369,33 @@ def channel_block(channel: str, kind: str):
                      ("verifs", "Verifs", False), ("deposits", "Deposits", False),
                      ("$/event", f"$/{ev[:-1].title()}", True)])
     df = daily(account, ids, s, e)
-    stages = ([("installs", "Installs"), ("signups", "Signups"), ("verifs", "Verifs"), ("deposits", "Deposits")]
-              if channel == "MULTI_CHANNEL" else
-              [("clicks", "Clicks"), ("signups", "Signups"), ("verifs", "Verifs"), ("deposits", "Deposits")])
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.markdown("**Funnel**")
-        st.altair_chart(funnel(cur, stages), width="stretch")
-        with st.expander("Table"):
-            st.dataframe(pd.DataFrame([{"stage": l, "count": cur[k]} for k, l in stages]),
-                         width="stretch", hide_index=True)
-    with c2:
-        st.markdown("**Spend by day**")
-        if not df.empty:
-            st.altair_chart(trend(df, "cost", "Spend $", S1, True), width="stretch")
+    ag = daily_by_adgroup(account, ids, s, e)
     if not df.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Cost per event by day**")
+            st.caption("CPI install · CPS signup · CPL verification — click a legend item to isolate it")
+            ch = lines(df, ["CPI", "CPS", "CPL"], "Cost $", money=True, legend_title="Metric")
+            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No events yet.")
+        with c2:
+            st.markdown("**Spend by day · by ad group**")
+            ch = stacked_spend(ag)
+            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No ad-group spend.")
         c3, c4 = st.columns(2)
-        eff = "$/Verif" if channel == "MULTI_CHANNEL" else "$/Signup"
         with c3:
-            st.markdown(f"**{eff} by day**")
-            st.altair_chart(trend(df, eff, eff, S2, True), width="stretch")
+            st.markdown("**Deposits & deposit attempts by day**")
+            ch = lines(df, ["deposits", "dep_att"], "Count", money=False, legend_title="Event")
+            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No deposit events yet.")
         with c4:
-            st.markdown("**Events by day**")
-            st.altair_chart(multi_trend(df, ["signups", "verifs"], "Count"), width="stretch")
+            st.markdown("**Signups & verifications by day**")
+            ch = lines(df, ["signups", "verifs"], "Count", money=False, legend_title="Event")
+            st.altair_chart(ch, width="stretch") if ch is not None else st.info("No events yet.")
         with st.expander("Daily table"):
             st.dataframe(df, width="stretch", hide_index=True)
+        if not ag.empty:
+            with st.expander("Ad-group spend table"):
+                st.dataframe(ag.pivot_table(index="date", columns="ad_group", values="cost",
+                                            aggfunc="sum").fillna(0), width="stretch")
     split = campaign_split(account, ids, s, e)
     if len(split) > 1:
         st.markdown("**Spend by campaign**")
