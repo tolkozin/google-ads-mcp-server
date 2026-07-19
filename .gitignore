@@ -29,3 +29,4 @@ reports/
 logs/
 automation_secrets.json
 config.json
+.streamlit/secrets.toml

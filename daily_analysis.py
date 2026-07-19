@@ -15,9 +15,9 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-import yaml
 from google.ads.googleads.client import GoogleAdsClient
 
+import ads_auth
 import analysis_config
 import charts
 import report_html
@@ -36,11 +36,10 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(Path(__file__).parent / ".env")
 
-ACCOUNT = os.getenv("ADS_ANALYSIS_ACCOUNT", "")  # set in gitignored .env
+# Resolved from Streamlit secrets (cloud) or .env / google-ads.yaml (local).
+# Never raises at import so this module stays importable without credentials.
+ACCOUNT = ads_auth.get_account()
 LOGIN_CID = os.getenv("ADS_ANALYSIS_LOGIN_CID", ACCOUNT)
-CRED = os.getenv("GOOGLE_ADS_CREDENTIALS", str(Path(__file__).parent / "google-ads.yaml"))
-if not ACCOUNT:
-    raise SystemExit("Set ADS_ANALYSIS_ACCOUNT in .env or the environment.")
 REPORTS = Path(__file__).parent / "reports"
 # Market/vocabulary config lives in gitignored config.json (see config.example.json)
 GEO = analysis_config.get("geo_target_constant")
@@ -51,8 +50,9 @@ EVENT_HDR = "Install | Signup | Verif | DepAtt | Deposit"
 
 
 def get_client() -> GoogleAdsClient:
-    cfg = yaml.safe_load(open(CRED))
-    cfg["login_customer_id"] = LOGIN_CID
+    cfg = ads_auth.load_credentials()
+    if LOGIN_CID:
+        cfg["login_customer_id"] = LOGIN_CID
     return GoogleAdsClient.load_from_dict(cfg, version="v23")
 
 
@@ -466,6 +466,8 @@ def _uac_assets(client, md, ids):
 # ============================ MAIN ============================
 
 def main():
+    if not ACCOUNT:
+        raise SystemExit("Set ADS_ANALYSIS_ACCOUNT in .env or the environment.")
     stamp = datetime.now(timezone.utc).astimezone()
     client = get_client()
     REPORTS.mkdir(exist_ok=True)

@@ -13,6 +13,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+import ads_auth
 import analysis_config
 from daily_analysis import ACCOUNT, bucket, get_client, rows, usd
 
@@ -195,6 +196,21 @@ def kpis(t: dict):
 # ------------------------------------------------------------------ UI
 st.title(f"📊 Google Ads — {BRAND}")
 st.caption(f"Account {ACCOUNT} · live data · read-only")
+
+# Fail loudly but readably when the deployment has no credentials configured.
+if not ACCOUNT:
+    st.error(
+        "No Google Ads account configured.\n\n"
+        "**Streamlit Cloud:** open *App settings → Secrets* and add an `[ads]` "
+        "section with `account = \"1234567890\"` plus a `[google_ads]` section "
+        "(see `.streamlit/secrets.toml.example`).\n\n"
+        "**Locally:** set `ADS_ANALYSIS_ACCOUNT` in `.env`.")
+    st.stop()
+try:
+    ads_auth.load_credentials()
+except Exception as exc:
+    st.error(f"Google Ads credentials are not configured: {exc}")
+    st.stop()
 
 with st.sidebar:
     st.header("📅 Date range")
