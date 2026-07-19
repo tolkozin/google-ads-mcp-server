@@ -473,17 +473,62 @@ with tab_o:
     else:
         st.info("No Search campaigns in this period.")
 
-    # --- 2. keywords to pause ----------------------------------------------
-    st.markdown("#### 2 · Keywords to pause")
-    kdf = keywords(account, search_ids, s, e) if search_ids else pd.DataFrame()
-    if not kdf.empty:
-        drop = kdf[(kdf["status"] == "ENABLED") & (kdf["signups"] == 0) & (kdf["cost"] >= 5)]
-        if not drop.empty:
-            st.warning(f"{len(drop)} enabled keywords spent ${drop['cost'].sum():,.2f} with **0 signups**.")
-            st.dataframe(drop[["keyword", "match", "clicks", "cost"]], width="stretch", hide_index=True,
-                         column_config={"cost": st.column_config.NumberColumn(format="$%.2f")})
+    # --- 2. keyword verdicts (statistically honest) -------------------------
+    st.markdown("#### 2 · Keyword verdicts")
+    look = st.slider("Look-back for keyword decisions (days)", 30, 180, 90, 30,
+                     help="Keyword calls need history — judging on a few days mostly measures noise.")
+    ls, le = date.today() - timedelta(days=look), date.today()
+    if search_ids:
+        base = totals(account, search_ids, ls, le)
+        cvr = base["signups"] / base["clicks"] if base["clicks"] else 0
+        need = (1 / cvr) if cvr else float("inf")     # clicks for ONE expected signup
+        enough = 3 * need                             # seeing 0 here is ~95% meaningful
+        st.caption(f"Baseline over {look} days: {base['clicks']:,} clicks · {base['signups']:.0f} signups → "
+                   f"**CVR {cvr*100:.2f}%**. One signup is expected every **~{need:.0f} clicks**, so a keyword "
+                   f"needs **~{enough:.0f} clicks** before “0 signups” means anything.")
+        kdf = keywords(account, search_ids, ls, le)
+        kdf = kdf[kdf["status"] == "ENABLED"] if not kdf.empty else kdf
+        if not kdf.empty:
+            junk = analysis_config.get("junk_tokens", [])
+            out = []
+            for _, r in kdf.iterrows():
+                clicks, sig = r["clicks"], r["signups"]
+                informational = any(j in r["keyword"].lower() for j in junk)
+                if sig > 0:
+                    verdict = "✅ Keep — converts"
+                    why = (f"{sig:.0f} signup(s) at ${r['cost']/sig:,.2f}. This one earns its budget — "
+                           f"{'already tight' if r['match'] != 'BROAD' else 'move BROAD → PHRASE/EXACT to protect it'}.")
+                elif informational:
+                    verdict = "⛔ Cut — wrong intent"
+                    why = (f"{clicks:.0f} clicks, no signups, and the wording is informational "
+                           f"(price/rate lookup) rather than buying intent.")
+                elif clicks >= enough:
+                    verdict = "⛔ Pause or tighten"
+                    why = (f"{clicks:.0f} clicks — enough to judge (≈{clicks*cvr:.1f} signups expected, got 0). "
+                           f"Genuinely weak: pause, or keep only as EXACT with a low bid.")
+                elif clicks >= 20 and r["match"] == "BROAD":
+                    verdict = "🔧 Tighten to PHRASE"
+                    why = (f"{clicks:.0f} clicks, no signups yet — still not enough to condemn it, so this is a "
+                           f"structural call, not a conversion one: BROAD spends part of the budget on loose "
+                           f"variants. PHRASE keeps the same core traffic and drops the tail. Safer than pausing.")
+                else:
+                    verdict = "⏳ Keep — too early"
+                    why = (f"only {clicks:.0f} clicks (≈{clicks*cvr:.1f} signups expected). Zero here is noise, "
+                           f"not proof. Needs ~{max(0, enough-clicks):.0f} more clicks for a verdict — "
+                           f"pausing now would cut traffic without evidence.")
+                out.append({"keyword": r["keyword"], "match": r["match"], "clicks": int(clicks),
+                            "cost": r["cost"], "signups": sig, "verdict": verdict, "why": why})
+            vdf = pd.DataFrame(out).sort_values("cost", ascending=False)
+            cut = vdf[vdf["verdict"].str.startswith("⛔")]
+            keep = vdf[vdf["verdict"].str.startswith("⏳")]
+            st.warning(f"**{len(cut)}** keywords are genuinely weak · **{len(keep)}** simply lack data "
+                       f"(pausing those would cut traffic without evidence).") if len(cut) or len(keep) else None
+            st.dataframe(vdf, width="stretch", hide_index=True,
+                         column_config={"cost": st.column_config.NumberColumn(format="$%.2f"),
+                                        "signups": st.column_config.NumberColumn(format="%.1f"),
+                                        "why": st.column_config.TextColumn(width="large")})
         else:
-            st.success("No enabled keyword is burning ≥$5 without a signup. ✅")
+            st.info("No enabled keywords with spend in the look-back window.")
 
     # --- 3. creative proposals ---------------------------------------------
     st.markdown("#### 3 · Creatives to swap or rewrite")
