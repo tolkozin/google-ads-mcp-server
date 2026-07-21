@@ -10,12 +10,9 @@ set -a; [ -f .env ] && . ./.env; set +a
 mkdir -p reports logs
 # Run and tee a log; macOS notification on finish (best-effort).
 if uv run python daily_analysis.py >> "logs/daily.log" 2>&1; then
-  # Auto-open today's two dashboards (Search + UAC) in the default browser.
-  for page in search uac; do
-    f="reports/$(date +%Y-%m-%d)-$page.html"
-    [ -f "$f" ] && open "$f" 2>/dev/null || true
-  done
-  osascript -e 'display notification "Search + UAC dashboards opened" with title "Google Ads daily analysis"' 2>/dev/null || true
+  # Reports are markdown history + a Telegram push; the interactive view is the
+  # Streamlit dashboard (run separately). No browser tabs are opened here.
+  osascript -e 'display notification "Daily report ready (reports/ + Telegram)" with title "Google Ads daily analysis"' 2>/dev/null || true
 else
   osascript -e 'display notification "Analysis FAILED — see logs/daily.log" with title "Google Ads daily analysis"' 2>/dev/null || true
 fi

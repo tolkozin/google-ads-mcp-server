@@ -19,8 +19,6 @@ from google.ads.googleads.client import GoogleAdsClient
 
 import ads_auth
 import analysis_config
-import charts
-import report_html
 from translate import to_en
 
 
@@ -146,31 +144,6 @@ def totals_7d(client, ids):
     return base
 
 
-def daily_series(client, ids):
-    """(dates, {metric: [per-day values]}) over the last 7 days for a set of campaigns."""
-    idstr = ",".join(str(i) for i in ids)
-    day = {}
-    for x in rows(client, f"""SELECT segments.date, metrics.cost_micros FROM campaign
-        WHERE campaign.id IN ({idstr}) AND segments.date DURING LAST_7_DAYS ORDER BY segments.date"""):
-        d = day.setdefault(x.segments.date, {"cost": 0.0, **{e: 0.0 for e in EVENTS}})
-        d["cost"] += usd(x.metrics.cost_micros)
-    for x in rows(client, f"""SELECT segments.date, segments.conversion_action_name,
-        metrics.all_conversions FROM campaign WHERE campaign.id IN ({idstr})
-        AND segments.date DURING LAST_7_DAYS AND metrics.all_conversions > 0"""):
-        b = bucket(x.segments.conversion_action_name)
-        if b and x.segments.date in day:
-            day[x.segments.date][b] += x.metrics.all_conversions
-    dates = sorted(day)
-    cost = [day[d]["cost"] for d in dates]
-    ins = [day[d]["installs"] for d in dates]
-    sig = [day[d]["signups"] for d in dates]
-    dep_att = [day[d]["dep_att"] for d in dates]
-    cpi = [(day[d]["cost"] / day[d]["installs"]) if day[d]["installs"] else None for d in dates]
-    cpl = [(day[d]["cost"] / day[d]["signups"]) if day[d]["signups"] else None for d in dates]
-    return dates, {"cost": cost, "cpi": cpi, "cpl": cpl, "dep_att": dep_att,
-                   "installs": ins, "signups": sig}
-
-
 def _ev_cells(t):
     return f"{t['installs']:.0f} | {t['signups']:.0f} | {t['verifs']:.0f} | {t['dep_att']:.0f} | {t['deposits']:.0f}"
 
@@ -197,13 +170,6 @@ def build_search(client, stamp):
         if not focus:
             focus = {"name": name, "cost": round(t["cost"], 2), "clicks": t["clicks"],
                      "signups": round(t["signups"], 0), "deposits": round(t["deposits"], 0)}
-    md.append("")
-
-    md.append("## 2. Daily trend\n")
-    dates, s = daily_series(client, ids)
-    md.append(charts.daily_panel("Search — cost / CPL(signup) / CPI(first-open) / deposit-attempts", dates,
-              [("Cost/day", s["cost"], "money"), ("CPL signup", s["cpl"], "money2"),
-               ("CPI first-open", s["cpi"], "money2"), ("Deposit-attempts", s["dep_att"], "int")]))
     md.append("")
 
     md.append("## 3. Creatives by deep events\n")
@@ -379,13 +345,6 @@ def build_uac(client, stamp):
     if recs:
         md.append("**Recommendations:**"); md.extend(f"- {r}" for r in recs); md.append("")
 
-    md.append("## 2. Daily trend\n")
-    dates, s = daily_series(client, ids)
-    md.append(charts.daily_panel("UAC — cost / CPI / CPL(signup) / deposit-attempts", dates,
-              [("Cost/day", s["cost"], "money"), ("CPI install", s["cpi"], "money2"),
-               ("CPL signup", s["cpl"], "money2"), ("Deposit-attempts", s["dep_att"], "int")]))
-    md.append("")
-
     md.append("## 3. Creatives by event (last 30 days)\n")
     md.append("> Judged on **$/Verif — the campaign's optimization event — not Google's asset "
               "label**. Inefficient text assets get a replacement suggestion.\n")
@@ -475,11 +434,11 @@ def main():
     for key, builder, title in [("search", build_search, "Search (W2A)"),
                                 ("uac", build_uac, "UAC / App")]:
         md_text, focus = builder(client, stamp)
-        (REPORTS / f"{stamp:%Y-%m-%d}-{key}.md").write_text(md_text, encoding="utf-8")
-        html_path = REPORTS / f"{stamp:%Y-%m-%d}-{key}.html"
-        html_path.write_text(report_html.to_html(md_text, f"{title} — {stamp:%Y-%m-%d}"), encoding="utf-8")
+        # Markdown history only — the interactive dashboard is the Streamlit app.
+        md_path = REPORTS / f"{stamp:%Y-%m-%d}-{key}.md"
+        md_path.write_text(md_text, encoding="utf-8")
         outputs[key] = focus
-        print(f"Wrote {key}: {html_path}")
+        print(f"Wrote {key}: {md_path}")
 
     # delivery (best-effort)
     try:
@@ -492,7 +451,7 @@ def main():
             f"📱 UAC `{ua.get('name', 'n/a')}`: ${ua.get('cost', 0)} · "
             f"{ua.get('signups', 0):.0f} signups · {ua.get('deposits', 0):.0f} dep\n"
             f"Search proposals: ➕{se.get('add', 0)} kw · ⛔{se.get('neg', 0)} neg · ⚠️{se.get('flags', 0)} creatives\n"
-            f"Reports: reports/{stamp:%Y-%m-%d}-search.html · -uac.html"
+            f"Open the dashboard for detail."
         )
         sent = notify.send_telegram(push)
         row = [f"{stamp:%Y-%m-%d}", se.get("name", ""), se.get("cost", 0), se.get("signups", 0),
